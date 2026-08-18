@@ -287,3 +287,24 @@ def test_detects_categorical_profile():
     analysis = DatasetAnalyzer(df).analyze()
 
     assert analysis.profile_type == "categorical"
+    
+    
+def test_detects_temporal_profile():
+    df = pd.DataFrame(
+        {
+            "timestamp": [
+                "2026-01-01",
+                "2026-01-02",
+                "2026-01-03",
+            ],
+            "feature": [
+                1.2,
+                2.4,
+                3.1,
+            ],
+        }
+    )
+
+    analysis = DatasetAnalyzer(df).analyze()
+
+    assert analysis.profile_type == "temporal"

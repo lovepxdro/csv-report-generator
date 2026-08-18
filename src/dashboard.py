@@ -45,6 +45,12 @@ class DashboardGenerator:
                 data_sheet,
             )
 
+        elif self.analysis.profile_type == "temporal":
+            self._build_temporal_dashboard(
+                dashboard,
+                data_sheet,
+            )
+
         else:
             self._build_mixed_dashboard(
                 dashboard,
@@ -52,13 +58,10 @@ class DashboardGenerator:
             )
 
         data_sheet.sheet_state = "hidden"
-
         dashboard.sheet_view.showGridLines = False
 
         for column in "ABCDEFGHIJKLMNOP":
-            dashboard.column_dimensions[
-                column
-            ].width = 14
+            dashboard.column_dimensions[column].width = 14
 
     def _build_title(self, worksheet) -> None:
         worksheet.merge_cells("A1:O2")
@@ -300,10 +303,8 @@ class DashboardGenerator:
                 vertical="center",
             )
 
-            if isinstance(value, float):
-                value_cell.number_format = (
-                    "#,##0.00"
-                )
+            if isinstance(value, pd.Timestamp):
+                value_cell.number_format = "DD/MM/YYYY"
 
     def _build_variability_chart(
         self,
@@ -1499,3 +1500,395 @@ class DashboardGenerator:
                 column=6,
                 value=self.analysis.null_values[column],
             )
+            
+    def _build_temporal_dashboard(
+        self,
+        dashboard,
+        data_sheet,
+    ) -> None:
+        date_column = self.analysis.datetime_columns[0]
+
+        series = self.df[date_column].dropna()
+
+        if series.empty:
+            return
+
+        start_date = series.min()
+        end_date = series.max()
+
+        duration_days = (
+            end_date - start_date
+        ).days
+
+        kpis = [
+            (
+                "Registros",
+                self.analysis.rows,
+            ),
+            (
+                "Data inicial",
+                start_date,
+            ),
+            (
+                "Data final",
+                end_date,
+            ),
+            (
+                "Duração (dias)",
+                duration_days,
+            ),
+        ]
+
+        self._write_kpis(
+            dashboard,
+            kpis,
+        )
+
+        metric = self.analysis.primary_metric
+
+        if metric:
+            self._build_temporal_metric_chart(
+                dashboard,
+                data_sheet,
+                date_column,
+                metric,
+            )
+
+            self._build_temporal_metric_summary(
+                dashboard,
+                date_column,
+                metric,
+            )
+
+        else:
+            self._build_event_count_chart(
+                dashboard,
+                data_sheet,
+                date_column,
+            )
+
+            self._build_temporal_event_summary(
+                dashboard,
+                date_column,
+            )
+            
+    def _build_temporal_metric_chart(
+        self,
+        dashboard,
+        data_sheet,
+        date_column,
+        metric,
+    ) -> None:
+        grouped = (
+            self.df[
+                [date_column, metric]
+            ]
+            .dropna()
+            .groupby(
+                date_column,
+                as_index=False,
+            )[metric]
+            .sum()
+            .sort_values(date_column)
+        )
+
+        if grouped.empty:
+            return
+
+        data_sheet["A1"] = date_column
+        data_sheet["B1"] = metric
+
+        for row, (_, record) in enumerate(
+            grouped.iterrows(),
+            start=2,
+        ):
+            date_cell = data_sheet.cell(
+                row=row,
+                column=1,
+                value=record[date_column],
+            )
+
+            date_cell.number_format = "DD/MM/YYYY"
+
+            data_sheet.cell(
+                row=row,
+                column=2,
+                value=float(record[metric]),
+            )
+
+        chart = LineChart()
+
+        chart.title = (
+            f"{metric.title()} ao longo do tempo"
+        )
+
+        chart.x_axis.title = (
+            date_column.title()
+        )
+
+        chart.y_axis.title = (
+            metric.title()
+        )
+
+        chart.height = 10
+        chart.width = 20
+
+        data = Reference(
+            data_sheet,
+            min_col=2,
+            min_row=1,
+            max_row=len(grouped) + 1,
+        )
+
+        categories = Reference(
+            data_sheet,
+            min_col=1,
+            min_row=2,
+            max_row=len(grouped) + 1,
+        )
+
+        chart.add_data(
+            data,
+            titles_from_data=True,
+        )
+
+        chart.set_categories(categories)
+
+        dashboard.add_chart(
+            chart,
+            "A9",
+        )
+        
+    
+    def _build_event_count_chart(
+        self,
+        dashboard,
+        data_sheet,
+        date_column,
+    ) -> None:
+        grouped = (
+            self.df[[date_column]]
+            .dropna()
+            .groupby(date_column)
+            .size()
+            .reset_index(
+                name="eventos"
+            )
+            .sort_values(date_column)
+        )
+
+        if grouped.empty:
+            return
+
+        data_sheet["D1"] = date_column
+        data_sheet["E1"] = "eventos"
+
+        for row, (_, record) in enumerate(
+            grouped.iterrows(),
+            start=2,
+        ):
+            date_cell = data_sheet.cell(
+                row=row,
+                column=4,
+                value=record[date_column],
+            )
+
+            date_cell.number_format = "DD/MM/YYYY"
+
+            data_sheet.cell(
+                row=row,
+                column=5,
+                value=int(record["eventos"]),
+            )
+
+        chart = LineChart()
+
+        chart.title = "Eventos ao longo do tempo"
+        chart.x_axis.title = date_column.title()
+        chart.y_axis.title = "Eventos"
+
+        chart.height = 10
+        chart.width = 20
+
+        data = Reference(
+            data_sheet,
+            min_col=5,
+            min_row=1,
+            max_row=len(grouped) + 1,
+        )
+
+        categories = Reference(
+            data_sheet,
+            min_col=4,
+            min_row=2,
+            max_row=len(grouped) + 1,
+        )
+
+        chart.add_data(
+            data,
+            titles_from_data=True,
+        )
+
+        chart.set_categories(categories)
+
+        dashboard.add_chart(
+            chart,
+            "A9",
+        )
+        
+        
+    def _build_temporal_metric_summary(
+        self,
+        worksheet,
+        date_column,
+        metric,
+    ) -> None:
+        grouped = (
+            self.df[
+                [date_column, metric]
+            ]
+            .dropna()
+            .groupby(
+                date_column,
+                as_index=False,
+            )[metric]
+            .sum()
+        )
+
+        if grouped.empty:
+            return
+
+        peak_row = grouped.loc[
+            grouped[metric].idxmax()
+        ]
+
+        average = float(
+            grouped[metric].mean()
+        )
+
+        start_row = 28
+
+        worksheet.cell(
+            row=start_row,
+            column=1,
+            value="Resumo temporal",
+        ).font = Font(
+            bold=True,
+            size=14,
+        )
+
+        values = [
+            (
+                "Métrica",
+                metric,
+            ),
+            (
+                "Média por período",
+                average,
+            ),
+            (
+                "Maior valor",
+                float(peak_row[metric]),
+            ),
+            (
+                "Data do pico",
+                peak_row[date_column],
+            ),
+        ]
+
+        for offset, (label, value) in enumerate(
+            values,
+            start=2,
+        ):
+            worksheet.cell(
+                row=start_row + offset,
+                column=1,
+                value=label,
+            ).font = Font(bold=True)
+
+            cell = worksheet.cell(
+                row=start_row + offset,
+                column=2,
+                value=value,
+            )
+
+            if label == "Data do pico":
+                cell.number_format = "DD/MM/YYYY"
+
+            elif isinstance(value, float):
+                cell.number_format = "#,##0.00"
+                
+    
+    def _build_temporal_event_summary(
+        self,
+        worksheet,
+        date_column,
+    ) -> None:
+        grouped = (
+            self.df[[date_column]]
+            .dropna()
+            .groupby(date_column)
+            .size()
+            .reset_index(
+                name="eventos"
+            )
+        )
+
+        if grouped.empty:
+            return
+
+        peak_row = grouped.loc[
+            grouped["eventos"].idxmax()
+        ]
+
+        average = float(
+            grouped["eventos"].mean()
+        )
+
+        start_row = 28
+
+        worksheet.cell(
+            row=start_row,
+            column=1,
+            value="Resumo temporal",
+        ).font = Font(
+            bold=True,
+            size=14,
+        )
+
+        values = [
+            (
+                "Média de eventos",
+                average,
+            ),
+            (
+                "Maior volume",
+                int(peak_row["eventos"]),
+            ),
+            (
+                "Data do pico",
+                peak_row[date_column],
+            ),
+        ]
+
+        for offset, (label, value) in enumerate(
+            values,
+            start=2,
+        ):
+            worksheet.cell(
+                row=start_row + offset,
+                column=1,
+                value=label,
+            ).font = Font(bold=True)
+
+            cell = worksheet.cell(
+                row=start_row + offset,
+                column=2,
+                value=value,
+            )
+
+            if label == "Data do pico":
+                cell.number_format = "DD/MM/YYYY"
+
+            elif isinstance(value, float):
+                cell.number_format = "#,##0.00"
